@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "samuelclient-ota",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-11-24",
+  "routes": [
+    {
+      "pattern": "mlup.mcnb.dev",
+      "custom_domain": true
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "OTA_BUCKET",
+      "bucket_name": "samuelclient-ota"
+    }
+  ]
+}
