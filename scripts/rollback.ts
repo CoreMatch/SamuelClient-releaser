@@ -8,7 +8,13 @@ import {
   type ManifestPayload,
   type ReleaseMetadata,
 } from '../src/manifest';
-import { createStorageClient, getObject, putObject, storageConfig } from '../src/storage';
+import {
+  createS3Storage,
+  storageBucket,
+  storageConfig,
+  type StorageClient,
+} from '../src/storage';
+import { createWranglerStorage } from '../src/wrangler-storage';
 
 const STABLE_KEY = 'manifests/stable.json';
 
@@ -19,17 +25,18 @@ async function main(): Promise<void> {
     ? args['--notes'].trim()
     : `Rollback to ${version} after a problematic stable release.`;
   const keys = loadSigningKeys();
-  const config = storageConfig();
-  const client = createStorageClient(config);
+  const storage = process.env.R2_UPLOAD_MODE === 'wrangler'
+    ? createWranglerStorage(storageBucket())
+    : createS3Storage(storageConfig());
 
-  const currentRaw = await getObject(client, config, STABLE_KEY);
+  const currentRaw = await storage.getObject(STABLE_KEY);
   if (!currentRaw) throw new Error('there is no active stable manifest to roll back');
   const current = verifyManifest(currentRaw.toString('utf8'), keys.publicKey);
   if (compareVersions(version, current.version) >= 0) {
     throw new Error('rollback target must be older than the active stable version');
   }
 
-  const release = await readRelease(client, config, version);
+  const release = await readRelease(storage, version);
   const payload: ManifestPayload = {
     schemaVersion: 1,
     channel: 'stable',
@@ -42,16 +49,15 @@ async function main(): Promise<void> {
     assets: release.assets,
   };
   const signed = signManifest(payload, keys.privateKey);
-  await putObject(client, config, STABLE_KEY, JSON.stringify(signed), 'application/json', 'no-store');
+  await storage.putObject(STABLE_KEY, JSON.stringify(signed), 'application/json', 'no-store');
   console.log(`Rolled stable back to ${version}; clients on ${current.version} will be required to downgrade`);
 }
 
 async function readRelease(
-  client: ReturnType<typeof createStorageClient>,
-  config: ReturnType<typeof storageConfig>,
+  storage: StorageClient,
   version: string,
 ): Promise<ReleaseMetadata> {
-  const raw = await getObject(client, config, `releases/${version}/release.json`);
+  const raw = await storage.getObject(`releases/${version}/release.json`);
   if (!raw) throw new Error(`release metadata for ${version} does not exist`);
   const value: unknown = JSON.parse(raw.toString('utf8'));
   validateReleaseMetadata(value);

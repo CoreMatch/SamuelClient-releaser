@@ -57,6 +57,7 @@ describe('publish and rollback CLI', () => {
       R2_ACCESS_KEY_ID: 'local-access-key',
       R2_SECRET_ACCESS_KEY: 'local-secret-key',
       R2_BUCKET: 'samuelclient-ota',
+      R2_UPLOAD_MODE: 's3',
       R2_ENDPOINT: baseURL,
       OTA_PRIVATE_KEY_PATH: privatePath,
       OTA_PUBLIC_KEY_PATH: publicPath,

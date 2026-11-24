@@ -17,6 +17,22 @@ export interface StorageConfig {
   endpoint: string;
 }
 
+export interface StorageClient {
+  getObject(key: string): Promise<Buffer | null>;
+  headObject(key: string): Promise<{ metadata?: Record<string, string> } | null>;
+  putObject(
+    key: string,
+    body: Buffer | string,
+    contentType: string,
+    cacheControl: string,
+    metadata?: Record<string, string>,
+  ): Promise<void>;
+}
+
+export function storageBucket(): string {
+  return process.env.R2_BUCKET || 'samuelclient-ota';
+}
+
 export function storageConfig(): StorageConfig {
   const accountId = requiredEnv('R2_ACCOUNT_ID');
   const accessKeyId = requiredEnv('R2_ACCESS_KEY_ID');
@@ -25,8 +41,18 @@ export function storageConfig(): StorageConfig {
     accountId,
     accessKeyId,
     secretAccessKey,
-    bucket: process.env.R2_BUCKET || 'samuelclient-ota',
+    bucket: storageBucket(),
     endpoint: process.env.R2_ENDPOINT || `https://${accountId}.r2.cloudflarestorage.com`,
+  };
+}
+
+export function createS3Storage(config: StorageConfig): StorageClient {
+  const client = createStorageClient(config);
+  return {
+    getObject: key => getObject(client, config, key),
+    headObject: key => headObject(client, config, key),
+    putObject: (key, body, contentType, cacheControl, metadata) =>
+      putObject(client, config, key, body, contentType, cacheControl, metadata),
   };
 }
 

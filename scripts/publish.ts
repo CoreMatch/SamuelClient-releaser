@@ -17,12 +17,12 @@ import {
   type ReleaseMetadata,
 } from '../src/manifest';
 import {
-  createStorageClient,
-  getObject,
-  headObject,
-  putObject,
+  createS3Storage,
+  storageBucket,
   storageConfig,
+  type StorageClient,
 } from '../src/storage';
+import { createWranglerStorage } from '../src/wrangler-storage';
 
 const STABLE_KEY = 'manifests/stable.json';
 const immutableCacheControl = 'public, max-age=31536000, immutable';
@@ -36,10 +36,11 @@ async function main(): Promise<void> {
   const mandatory = args['--mandatory'] === true;
 
   const keys = loadSigningKeys();
-  const config = storageConfig();
-  const client = createStorageClient(config);
+  const storage = process.env.R2_UPLOAD_MODE === 'wrangler'
+    ? createWranglerStorage(storageBucket())
+    : createS3Storage(storageConfig());
 
-  const current = await readStableManifest(client, config, keys.publicKey);
+  const current = await readStableManifest(storage, keys.publicKey);
   if (current && compareVersions(version, current.version) <= 0) {
     const comparison = compareVersions(version, current.version);
     if (comparison < 0) throw new Error('refusing to downgrade; use npm run rollback -- --version <version>');
@@ -62,18 +63,16 @@ async function main(): Promise<void> {
   };
   validateReleaseMetadata(release);
 
-  const existing = await readReleaseMetadata(client, config, version);
+  const existing = await readReleaseMetadata(storage, version);
   if (existing && JSON.stringify(existing) !== JSON.stringify(release)) {
     throw new Error(`${version} already exists with different artifacts or release metadata`);
   }
 
   await Promise.all([
-    uploadAsset(client, config, linux.asset, linux.file),
-    uploadAsset(client, config, windows.asset, windows.file),
+    uploadAsset(storage, linux.asset, linux.file),
+    uploadAsset(storage, windows.asset, windows.file),
   ]);
-  await putObject(
-    client,
-    config,
+  await storage.putObject(
     releaseObjectKey(version),
     JSON.stringify(release, null, 2),
     'application/json',
@@ -92,7 +91,7 @@ async function main(): Promise<void> {
     assets: release.assets,
   };
   const signed = signManifest(payload, keys.privateKey);
-  await putObject(client, config, STABLE_KEY, JSON.stringify(signed), 'application/json', 'no-store');
+  await storage.putObject(STABLE_KEY, JSON.stringify(signed), 'application/json', 'no-store');
 
   console.log(`Published ${version}${mandatory ? ' (mandatory)' : ''}`);
   console.log(`Manifest: https://mlup.mcnb.dev/v1/channels/stable.json`);
@@ -132,23 +131,20 @@ function fileBaseName(file: string, version: string, os: 'linux' | 'windows', ar
 }
 
 async function uploadAsset(
-  client: ReturnType<typeof createStorageClient>,
-  config: ReturnType<typeof storageConfig>,
+  storage: StorageClient,
   asset: ReleaseAsset,
   file: string,
 ): Promise<void> {
   const version = asset.url.split('/')[3];
   const key = assetObjectKey(version, asset.os, asset.arch);
-  const existing = await headObject(client, config, key);
+  const existing = await storage.headObject(key);
   if (existing) {
     if (existing.metadata?.sha256 === asset.sha256) return;
-    const remote = await getObject(client, config, key);
+    const remote = await storage.getObject(key);
     if (remote && createHash('sha256').update(remote).digest('hex') === asset.sha256) return;
     throw new Error(`refusing to overwrite immutable asset ${key}`);
   }
-  await putObject(
-    client,
-    config,
+  await storage.putObject(
     key,
     readFileSync(file),
     'application/octet-stream',
@@ -158,20 +154,18 @@ async function uploadAsset(
 }
 
 async function readStableManifest(
-  client: ReturnType<typeof createStorageClient>,
-  config: ReturnType<typeof storageConfig>,
+  storage: StorageClient,
   publicKey: Parameters<typeof verifyManifest>[1],
 ): Promise<ManifestPayload | null> {
-  const raw = await getObject(client, config, STABLE_KEY);
+  const raw = await storage.getObject(STABLE_KEY);
   return raw ? verifyManifest(raw.toString('utf8'), publicKey) : null;
 }
 
 async function readReleaseMetadata(
-  client: ReturnType<typeof createStorageClient>,
-  config: ReturnType<typeof storageConfig>,
+  storage: StorageClient,
   version: string,
 ): Promise<ReleaseMetadata | null> {
-  const raw = await getObject(client, config, releaseObjectKey(version));
+  const raw = await storage.getObject(releaseObjectKey(version));
   if (!raw) return null;
   const value: unknown = JSON.parse(raw.toString('utf8'));
   validateReleaseMetadata(value);
